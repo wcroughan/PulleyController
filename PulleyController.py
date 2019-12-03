@@ -37,16 +37,22 @@ class CoordinateSender(serial.Serial):
     def freezeMotor(self):
         if self._is_enabled:
             self.write(FREEZE_COMMAND)
+        else:
+            print("Serial port not enabled")
 
     def returnToHome(self):
         if self._is_enabled:
             self.write(HOME_COMMAND)
+        else:
+            print("Serial port not enabled")
 
     def sendCoordinates(self, xcoord, ycoord):
         if self._is_enabled:
             self.write(COORDS_COMMAND)
             self.write(xcoord)
             self.write(ycoord)
+        else:
+            print("Serial port not enabled")
 
 
 
@@ -78,18 +84,23 @@ class SGClient(tn.AbstractModuleClient):
             logging.info(MODULE_IDENTIFIER + "Initialized connection to Trodes.")
 
 def main():
+    #connect to motors
+    motor = CoordinateSender()
+    motor.enable()
+    motor.returnToHome()
+
+    #connect to trodes
     sg_client = SGClient("PulleyController")
     position_consumer = sg_client.subscribeHighFreqData("PositionData", "CameraModule")
     if (position_consumer is None):
         # Failed to open connection to camera module
         logging.warning("Failed to open Camera Module")
         raise Exception("Error: Could not connect to camera, aborting.")
-
-    self._position_consumer.initialize()
+    position_consumer.initialize()
 
 
     while True:
-        n_available_frames = self._position_consumer.available(0)
+        n_available_frames = position_consumer.available(0)
         if n_available_frames == 0:
             down_time += 0.02
             time.sleep(0.02)
@@ -98,3 +109,12 @@ def main():
                 print(MODULE_IDENTIFIER + "Warning: Not receiving position data.")
         else:
             down_time = 0.0
+
+            position_consumer.readData(data_field)
+            px = data_field['position_x']
+            py = data_field['position_y']
+
+            motor.sendCoordinates(px, py)
+
+if __name__ == "__main__":
+    main()
