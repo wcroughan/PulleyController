@@ -90,11 +90,14 @@ void loop()
 
 void updateCoords(int x, int y)
 {
+    //distance from motor to new goal
     float d11 = sqrt((x - m1x) * (x - m1x) + (y - m1y) * (y - m1y));
     float d21 = sqrt((x - m2x) * (x - m2x) + (y - m2y) * (y - m2y));
     float d31 = sqrt((x - m3x) * (x - m3x) + (y - m3y) * (y - m3y));
     float d41 = sqrt((x - m4x) * (x - m4x) + (y - m4y) * (y - m4y));
 
+    //distance from motor to last goal
+    //doing all this speed stuff to synchronize when motors will finish a movement. Otherwise, some motors would reach their destination before others
     float d10 = sqrt((last_goal_x - m1x) * (last_goal_x - m1x) + (last_goal_y - m1y) * (last_goal_y - m1y));
     float d20 = sqrt((last_goal_x - m2x) * (last_goal_x - m2x) + (last_goal_y - m2y) * (last_goal_y - m2y));
     float d30 = sqrt((last_goal_x - m3x) * (last_goal_x - m3x) + (last_goal_y - m3y) * (last_goal_y - m3y));
@@ -127,4 +130,7 @@ void updateCoords(int x, int y)
     motor2.moveTo(d11);
     motor3.moveTo(d11);
     motor4.moveTo(d11);
+
+    last_goal_x = x;
+    last_goal_y = y;
 }
