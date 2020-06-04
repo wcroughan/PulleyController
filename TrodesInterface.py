@@ -3,11 +3,13 @@ Connection interface to Trodes
 """
 import logging
 from spikegadgets import trodesnetwork as tn
+import numpy as np
 
 # Constant declaration
 MODULE_IDENTIFIER = "[TrodesInterface] "
 LFP_SUBSCRIPTION_ATTRIBUTE = 2014
 SPIKE_SUBSCRIPTION_ATTRIBUTE = 1024
+
 
 class SGClient(tn.AbstractModuleClient):
     """
@@ -35,3 +37,24 @@ class SGClient(tn.AbstractModuleClient):
             raise Exception(error_message)
         else:
             logging.info(MODULE_IDENTIFIER + "Initialized connection to Trodes.")
+
+    def subscribeToPosition(self):
+        self.vidcon = self.subscribeHighFreqData('PositionData', 'CameraModule', 60)
+        self.vidcon.initialize()
+
+        ndtype = self.vidcon.getDataType().dataFormat
+        nbytesize = self.vidcon.getDataType().byteSize
+        dt = np.dtype(ndtype)
+        buf = memoryview(bytes(nbytesize))
+        self.vidbuf = np.frombuffer(buf, dtype=dt)
+
+    def getPosition(self):
+        n = self.vidcon.available(0)
+        for i in range(n):
+            bytesWritten = self.vidcon.readData(self.vidbuf)
+
+        print(self.vidbuf)
+        ts = self.vidbuf[0][0]
+        x = self.vidbuf[0][3]
+        y = self.vidbuf[0][4]
+        return ts, x, y
