@@ -50,34 +50,34 @@ class MotorController:
         self._state_m2 = self.MSTATE_FLOAT
 
     def getMaxVelForDiff(self, diff):
-        return abs(diff * self.MAX_VEL_DIFF_COEFF)
+        return min(255, abs(diff * self.MAX_VEL_DIFF_COEFF))
 
     def get_motor_command(self):
         # output should be one of the following for each motor:
         #   float command, brake command
         #   move command with a velocity
-        xdiff = self._xgoal - self._xpos
-        if abs(xdiff) < self.POSITION_TOLERANCE:
-            next_xvel = 0
-            if abs(self._xvel) > self.BRAKE_TRIGGER_VEL:
-                next_xstate = self.MSTATE_BRAKE
+        ydiff = self._ygoal - self._ypos
+        if abs(ydiff) < self.POSITION_TOLERANCE:
+            next_yvel = 0
+            if abs(self._yvel) > self.BRAKE_TRIGGER_VEL:
+                next_ystate = self.MSTATE_BRAKE
             else:
-                next_xstate = self.MSTATE_FLOAT
+                next_ystate = self.MSTATE_FLOAT
         else:
-            max_xvel = self.getMaxVelForDiff(xdiff)
-            next_xvel = self._xvel + self.VEL_RAMP_SPEED * np.sign(xdiff)
-            if abs(next_xvel) > max_xvel:
-                next_xvel = max_xvel * np.sign(next_xvel)
+            max_yvel = self.getMaxVelForDiff(ydiff)
+            next_yvel = self._yvel + self.VEL_RAMP_SPEED * np.sign(ydiff)
+            if abs(next_yvel) > max_yvel:
+                next_yvel = max_yvel * np.sign(next_yvel)
 
-            if next_xvel < 0:
-                next_xstate = self.MSTATE_REVERSE
+            if next_yvel < 0:
+                next_ystate = self.MSTATE_REVERSE
             else:
-                next_xstate = self.MSTATE_FORWARD
-            next_xvel = abs(next_xvel)
+                next_ystate = self.MSTATE_FORWARD
+            next_yvel = abs(next_yvel)
 
-        # ydiff = self._ygoal - self._ypos
-        next_ystate = self.MSTATE_FLOAT
-        next_yvel = 0
+        # xdiff = self._xgoal - self._xpos
+        next_xstate = self.MSTATE_FLOAT
+        next_xvel = 0
         return next_xstate, next_xvel, next_ystate, next_yvel
 
     def set_goal(self, xgoal, ygoal):
@@ -85,16 +85,20 @@ class MotorController:
         self._ygoal = ygoal
         if self._xgoal < self.MIN_X_GOAL:
             self._xgoal = self.MIN_X_GOAL
-            print("Clipping xgoal of {} to min: {}".format(xgoal, self.MIN_X_GOAL))
+            print("Clipping xgoal of {} to min: {}".format(
+                xgoal, self.MIN_X_GOAL))
         elif self._xgoal > self.MAX_X_GOAL:
             self._xgoal = self.MAX_X_GOAL
-            print("Clipping xgoal of {} to max: {}".format(xgoal, self.MAX_X_GOAL))
+            print("Clipping xgoal of {} to max: {}".format(
+                xgoal, self.MAX_X_GOAL))
         if self._ygoal < self.MIN_Y_GOAL:
             self._ygoal = self.MIN_Y_GOAL
-            print("Clipping ygoal of {} to min: {}".format(ygoal, self.MIN_Y_GOAL))
+            print("Clipping ygoal of {} to min: {}".format(
+                ygoal, self.MIN_Y_GOAL))
         elif self._ygoal > self.MAX_Y_GOAL:
             self._ygoal = self.MAX_Y_GOAL
-            print("Clipping ygoal of {} to max: {}".format(ygoal, self.MAX_Y_GOAL))
+            print("Clipping ygoal of {} to max: {}".format(
+                ygoal, self.MAX_Y_GOAL))
 
     def update_position(self, xpos, ypos):
         self._xpos = xpos
