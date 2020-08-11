@@ -2,11 +2,12 @@ import serial
 from spikegadgets import trodesnetwork as tn
 import logging
 
-BAUDRATE     = 115200
+BAUDRATE = 115200
 DEFAULT_PORT = '/dev/ttyACM0'
 FREEZE_COMMAND = b'F'
 HOME_COMMAND = b'H'
 COORDS_COMMAND = b'C'
+
 
 class CoordinateSender(serial.Serial):
     """
@@ -15,9 +16,8 @@ class CoordinateSender(serial.Serial):
 
     def __init__(self, port=DEFAULT_PORT, baud=BAUDRATE):
         self._is_enabled = False
-        serial.Serial.__init__(self, port, baud, timeout=0, \
-                xonxoff=False, rtscts=False, dsrdtr=False)
-
+        serial.Serial.__init__(self, port, baud, timeout=0,
+                               xonxoff=False, rtscts=False, dsrdtr=False)
 
     def getStatus(self):
         return self._is_enabled
@@ -55,7 +55,6 @@ class CoordinateSender(serial.Serial):
             print("Serial port not enabled")
 
 
-
 class SGClient(tn.AbstractModuleClient):
     """
     Extension of SpikeGadgets client for communicating with Trodes which is
@@ -83,13 +82,14 @@ class SGClient(tn.AbstractModuleClient):
         else:
             logging.info(MODULE_IDENTIFIER + "Initialized connection to Trodes.")
 
+
 def main():
-    #connect to motors
+    # connect to motors
     motor = CoordinateSender()
     motor.enable()
     motor.returnToHome()
 
-    #connect to trodes
+    # connect to trodes
     sg_client = SGClient("PulleyController")
     position_consumer = sg_client.subscribeHighFreqData("PositionData", "CameraModule")
     if (position_consumer is None):
@@ -97,7 +97,6 @@ def main():
         logging.warning("Failed to open Camera Module")
         raise Exception("Error: Could not connect to camera, aborting.")
     position_consumer.initialize()
-
 
     while True:
         n_available_frames = position_consumer.available(0)
@@ -115,6 +114,7 @@ def main():
             py = data_field['position_y']
 
             motor.sendCoordinates(px, py)
+
 
 if __name__ == "__main__":
     main()
