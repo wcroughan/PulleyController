@@ -2,6 +2,7 @@ import serial
 import signal
 import numpy as np
 from time import sleep
+from TrodesInterface import SGClient
 
 VERBOSITY = 0
 X_COORD_IS_MOTOR_1 = False
@@ -26,6 +27,13 @@ MSTATE_FLOAT = 0
 MSTATE_BRAKE = 1
 MSTATE_FORWARD = 2
 MSTATE_REVERSE = 3
+
+TRACKING_MOVE_COMMAND_FREQ = 15
+END_ON_BLANK = True
+
+motor_range_x = 0
+motor_range_y = 0
+motor_range_calibrated = False
 
 
 class MotorController:
@@ -151,6 +159,17 @@ def mv_done(signum, frame):
     raise TimeoutError("end of timeout")
 
 
+# Returns 1 when user requests to cancel within duration, returns 2 o/w
+def allow_cancel_prompt(duration):
+    signal.setitimer(signal.ITIMER_REAL, duration)
+    try:
+        input("press enter to cancel...")
+        signal.alarm(0)
+        return 1
+    except Exception:
+        return 2
+
+
 def timed_move(duration, motor_num):
     if motor_num == 1:
         # CMD_END_MV = CMD_B1
@@ -158,19 +177,15 @@ def timed_move(duration, motor_num):
     else:
         # CMD_END_MV = CMD_B2
         CMD_END_MV = CMD_F2
-    signal.setitimer(signal.ITIMER_REAL, duration)
-    try:
-        input("press enter to cancel move...")
-        # print("press enter to cancel move...")
-        # ri = raw_input()
-        signal.alarm(0)
-        print("sending end move command by user request")
-        ser.write(bytes([CMD_END_MV]))
-        recv_confirm()
-    except Exception:
-        print("sending end move command by timeout")
-        ser.write(bytes([CMD_END_MV]))
-        recv_confirm()
+    cancel_method = allow_cancel_prompt(duration)
+    ser.write(bytes([CMD_END_MV]))
+    if cancel_method == 1:
+        print("sent end move command by user request")
+    elif cancel_method == 2:
+        print("sent end move command by timeout")
+    else:
+        print("send end move command, unrecognized return code")
+    recv_confirm()
 
 
 signal.signal(signal.SIGALRM, mv_done)
@@ -217,23 +232,27 @@ class MotorSerialCommunicator:
 
         return bytes(a)
 
-    def encode_motor_command(self, cmd, ignore_edge_detect=False):
+    def encode_motor_command(self, cmd, ignore_edge_detect=False, ignore_edge_detect_x=False, ignore_edge_detect_y=False):
         if X_COORD_IS_MOTOR_1:
             next_m1_state, next_m1_vel, next_m2_state, next_m2_vel = cmd
+            ignore_edge_detect_m1 = ignore_edge_detect_x
+            ignore_edge_detect_m2 = ignore_edge_detect_y
         else:
             next_m2_state, next_m2_vel, next_m1_state, next_m1_vel = cmd
+            ignore_edge_detect_m1 = ignore_edge_detect_y
+            ignore_edge_detect_m2 = ignore_edge_detect_x
 
         if next_m1_state == MSTATE_BRAKE:
             m1_cmd = [CMD_B1]
         elif next_m1_state == MSTATE_FLOAT:
             m1_cmd = [CMD_F1]
         elif next_m1_state == MSTATE_FORWARD:
-            if ignore_edge_detect:
+            if ignore_edge_detect or ignore_edge_detect_m1:
                 m1_cmd = [CMD_G1, next_m1_vel, 1]
             else:
                 m1_cmd = [CMD_G1, next_m1_vel, 0]
         elif next_m1_state == MSTATE_REVERSE:
-            if ignore_edge_detect:
+            if ignore_edge_detect or ignore_edge_detect_m1:
                 m1_cmd = [CMD_R1, next_m1_vel, 1]
             else:
                 m1_cmd = [CMD_R1, next_m1_vel, 0]
@@ -243,12 +262,12 @@ class MotorSerialCommunicator:
         elif next_m2_state == MSTATE_FLOAT:
             m2_cmd = [CMD_F2]
         elif next_m2_state == MSTATE_FORWARD:
-            if ignore_edge_detect:
+            if ignore_edge_detect or ignore_edge_detect_m2:
                 m2_cmd = [CMD_G2, next_m2_vel, 1]
             else:
                 m2_cmd = [CMD_G2, next_m2_vel, 0]
         elif next_m2_state == MSTATE_REVERSE:
-            if ignore_edge_detect:
+            if ignore_edge_detect or ignore_edge_detect_m2:
                 m2_cmd = [CMD_R2, next_m2_vel, 1]
             else:
                 m2_cmd = [CMD_R2, next_m2_vel, 0]
@@ -260,7 +279,8 @@ motorcoms = MotorSerialCommunicator()
 mcon = MotorController()
 
 
-def recv_confirm():
+def recv_confirm(return_messages=False):
+    ret_msgs = []
     if motorcoms.EXPECT_CONFIRM_MSG:
         print("[arduino]: ", end="")
         msgb = ser.readline()
@@ -271,6 +291,8 @@ def recv_confirm():
         elif msg[-2:] == "\n\r" or msg[-2:] == "\r\n":
             msg = msg[0:-2]
         print(msg)
+        if return_messages:
+            ret_msgs.append(msg)
         if "forward" in msg or "backward" in msg or "unknown" in msg:
             num_followups = 1
         elif "Resetting" in msg:
@@ -287,10 +309,17 @@ def recv_confirm():
             elif msg2[-2:] == "\n\r" or msg2[-2:] == "\r\n":
                 msg2 = msg2[0:-2]
             print("[\t", msg2)
+            if return_messages:
+                ret_msgs.append(msg2)
 
         if "Cannot move" in msg:
+            raise Exception("unimplemented, need to say from arduino which wall was hit")
+            if return_messages:
+                return [1]
             return 1
 
+    if return_messages:
+        return ret_msgs
     return 0
 
 
@@ -299,6 +328,117 @@ def getPosition():
     recv_confirm()
     inp = ser.read(9)
     return motorcoms.parse_input(inp)
+
+
+TVID_XMIN = 270
+TVID_XMAX = 1050
+TVID_YMIN = 100
+TVID_YMAX = 850
+
+T2M_XM = 0
+T2M_XB = 0
+T2M_YM = 0
+T2M_YB = 0
+
+
+def initialize_t2m_constants():
+    global T2M_XM, T2M_XB, T2M_YM, T2M_YB
+    T2M_XM = motor_range_x / (TVID_XMAX - TVID_XMIN)
+    T2M_XB = -TVID_XMIN * T2M_XM
+    T2M_YM = motor_range_y / (TVID_YMAX - TVID_YMIN)
+    T2M_YB = -TVID_YMIN * T2M_YM
+
+
+def transform_to_motor_coords(xgoal, ygoal):
+    return (xgoal * T2M_XM + T2M_XB, ygoal * T2M_YM + T2M_YB)
+
+
+def run_tracking_function(tclient):
+    is_tracking = True
+    TRACKING_CANCEL_PROMPT_DURATION = 1.0 / float(TRACKING_MOVE_COMMAND_FREQ)
+
+    initialize_t2m_constants()
+
+    override_goal_x = False
+    override_goal_y = False
+    ignore_edge_detect_x = False
+    ignore_edge_detect_y = False
+
+    Y_RECOVER_GOAL_1 = 10
+    Y_RECOVER_GOAL_2 = motor_range_y - 10
+    X_RECOVER_GOAL_1 = 10
+    X_RECOVER_GOAL_2 = motor_range_x - 10
+    manual_goal_x = 0
+    manual_goal_y = 0
+
+    while is_tracking:
+        # get motor position from arduino
+        goodform, xpos, ypos = getPosition()
+        if not goodform:
+            print("Couldn't parse motor position from arduino, ENDING TRACKING")
+            is_tracking = False
+            break
+
+        # get goal (rat) position from trodes
+        ts, xgoal, ygoal = tclient.getPosition()
+        if ts == 0:
+            print("Blank input from Trodes")
+            if END_ON_BLANK:
+                is_tracking = False
+                break
+        else:
+            xgoal_m, ygoal_m = transform_to_motor_coords(xgoal, ygoal)
+            if override_goal_x:
+                xgoal_m = manual_goal_x
+            if override_goal_y:
+                ygoal_m = manual_goal_y
+            if VERBOSITY >= 1:
+                print("({}, {}) ==> ({}, {})".format(xgoal, ygoal, xgoal_m, ygoal_m))
+
+        # set motor goal and position
+        mcon.update_position(xpos, ypos)
+        mcon.set_goal(xgoal_m, ygoal_m)
+
+        # get motor command
+        cmd = mcon.get_motor_command()
+        output = motorcoms.encode_motor_command(
+            cmd, ignore_edge_detect_x=ignore_edge_detect_x, ignore_edge_detect_y=ignore_edge_detect_y)
+        if cmd[1] == 0 and cmd[3] == 0:
+            mcon.motor_is_stopped()
+
+        # send motor command
+        move_recv = 0
+        for op in output:
+            ser.write(op)
+            move_recv = recv_confirm()
+
+            # check if reached end zone. If so, set goal to back outside motor zone, next loop instead of rat location, set ignore flag to true
+            if move_recv > 0:
+                print("Edge {} detected by arduino".format(move_recv))
+                Exception("depending on the edge, back out")
+                override_goal_y = True
+                ignore_edge_detect_y = True
+                manual_goal_y = Y_RECOVER_GOAL_1
+
+        if override_goal_y and ypos > Y_RECOVER_GOAL_1 and ypos < Y_RECOVER_GOAL_2:
+            override_goal_y = False
+            ignore_edge_detect_y = False
+
+        if override_goal_x and xpos > X_RECOVER_GOAL_1 and xpos < X_RECOVER_GOAL_2:
+            override_goal_x = False
+            ignore_edge_detect_x = False
+
+        # pause (roughly camera rate or slower) and allow for cancelling input
+        cancel_ret_val = allow_cancel_prompt(TRACKING_CANCEL_PROMPT_DURATION)
+        if cancel_ret_val == 1:
+            # user wants to cancel
+            ser.write(bytes([CMD_F1]))
+            recv_confirm()
+            ser.write(bytes([CMD_F2]))
+            recv_confirm()
+            mcon.motor_is_stopped()
+            print("Cancelling tracking")
+            is_tracking = False
 
 
 running = True
@@ -322,7 +462,7 @@ while running:
     if len(inpcom) == 0:
         continue
     elif len(inpcom) == 1:
-        if not (inpcom in ["q", "h", "p", "l", "m", "a", "c"]):
+        if not (inpcom in ["q", "h", "p", "l", "m", "a", "c", "t"]):
             print("need motor number")
             continue
         com = inpcom[0]
@@ -394,7 +534,7 @@ while running:
         ser.write(output)
         recv_confirm()
     elif com == "h":
-        print("g - go forward\nr - go in reverse\nb - brake\nf - float\np - get position\nh - help\nq - quit")
+        print("g - go forward\nr - go in reverse\nb - brake\nf - float\np - get position\nm - move to\nt - trodes tracking\nh - help\nq - quit")
         continue
     elif com == "p":
         pass
@@ -450,7 +590,27 @@ while running:
         recv_confirm()
     elif com == "a":
         ser.write(bytes([CMD_QUERY_RANGES]))
-        recv_confirm()
+        calib_msgs = recv_confirm(return_messages=True)
+        motor_range_x = int(calib_msgs[1])
+        motor_range_y = int(calib_msgs[2])
+        motor_range_calibrated = True
+
+    elif com == "t":
+        if not motor_range_calibrated:
+            print("Please calibrate the motor first, then run query ranges (a)")
+            continue
+        # t for track rat, or trodes input, or time to follow the rat
+        if tclient is None:
+            # first time setup
+            tclient = SGClient("pulleycon")
+            tclient.subscribeToPosition()
+
+        if tclient is None:
+            print("Not connected to Trodes")
+            continue
+
+        run_tracking_function(tclient)
+
     else:
         print("unknown command {}".format(com))
         continue
